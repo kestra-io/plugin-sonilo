@@ -29,7 +29,7 @@ java {
 }
 
 group = "io.kestra.plugin"
-description = 'Sonilo plugin for Kestra'
+description = 'Generate licensed music, sound effects, and ducked mixes with the Sonilo API'
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"

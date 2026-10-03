@@ -1,7 +1,7 @@
 @PluginSubGroup(
     title = "Sonilo",
-    description = "Sonilo plugin for Kestra",
-    categories = PluginSubGroup.PluginCategory.DATA
+    description = "Generate licensed music, sound effects, and ducked mixes with the Sonilo API.",
+    categories = {PluginSubGroup.PluginCategory.BUSINESS}
 )
 package io.kestra.plugin.sonilo;
 
