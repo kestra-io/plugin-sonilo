@@ -87,6 +87,8 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter-engine"
     testImplementation "org.hamcrest:hamcrest"
     testImplementation "org.hamcrest:hamcrest-library"
+
+    testImplementation "org.wiremock:wiremock-standalone:3.13.1"
 }
 
 /**********************************************************************************************************************\
