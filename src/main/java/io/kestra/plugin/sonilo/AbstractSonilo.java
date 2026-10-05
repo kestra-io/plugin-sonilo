@@ -1,7 +1,5 @@
 package io.kestra.plugin.sonilo;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
@@ -118,7 +116,7 @@ public abstract class AbstractSonilo<O extends io.kestra.core.models.tasks.Outpu
     public void kill() {
         RunState state = state();
         state.killed.set(true);
-        abort(state.client.get());
+        closeQuietly(state.client.get());
         Thread worker = state.thread;
         if (worker != null) {
             worker.interrupt();
@@ -228,33 +226,10 @@ public abstract class AbstractSonilo<O extends io.kestra.core.models.tasks.Outpu
         return new CancellationException("Sonilo task was killed");
     }
 
-    /**
-     * {@code HttpClient.close()} waits for the active call. Immediate close unblocks that call.
-     * Sonilo does not expose a remote cancel endpoint.
-     */
-    private static void abort(HttpClient httpClient) {
+    private static void closeQuietly(HttpClient httpClient) {
         if (httpClient == null) {
             return;
         }
-        try {
-            Field field = HttpClient.class.getDeclaredField("client");
-            field.setAccessible(true);
-            Object apache = field.get(httpClient);
-            if (apache == null) {
-                closeQuietly(httpClient);
-                return;
-            }
-            @SuppressWarnings("unchecked")
-            Class<? extends Enum<?>> closeMode = (Class<? extends Enum<?>>) Class.forName("org.apache.hc.core5.io.CloseMode");
-            Object immediate = Enum.valueOf(closeMode.asSubclass(Enum.class), "IMMEDIATE");
-            Method close = apache.getClass().getMethod("close", closeMode);
-            close.invoke(apache, immediate);
-        } catch (Exception ignored) {
-            closeQuietly(httpClient);
-        }
-    }
-
-    private static void closeQuietly(HttpClient httpClient) {
         try {
             httpClient.close();
         } catch (Exception ignored) {
