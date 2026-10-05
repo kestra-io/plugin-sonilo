@@ -49,7 +49,7 @@
 - `GenerateMusicFromText` and `GenerateMusicFromVideo` call the Sonilo music endpoints. Streaming NDJSON is the default. wav, mp3, multiple variants, stems, ducking, and `preserveSpeech` run asynchronously and are polled.
 - `GenerateSfxFromText` and `GenerateSfxFromVideo` generate sound effects. `DuckAudio` ducks music under a voice track. Both are asynchronous.
 - `Trigger` polls `GET /v1/tasks/{taskId}` and fires once per terminal task id and status.
-- API audio is licensed for commercial use, including end users, on Sonilo's pay-as-you-go terms. Film, TV, broadcast, and streaming-release use is arranged with Sonilo sales. This is not legal advice. Platform keys come from platform.sonilo.com and are separate from sonilo.com app logins.
+- Platform keys come from platform.sonilo.com and are separate from sonilo.com app logins. Usage of generated audio is covered by [Sonilo's Terms of Service](https://sonilo.com/terms-of-service).
 
 ## Running Kestra locally with this plugin
 

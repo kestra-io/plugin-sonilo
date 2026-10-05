@@ -2,17 +2,14 @@ package io.kestra.plugin.sonilo;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.URI;
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import io.kestra.core.http.client.HttpClient;
 import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.models.annotations.PluginProperty;
@@ -20,8 +17,10 @@ import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.Task;
 import io.kestra.core.runners.RunContext;
+import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -34,13 +33,12 @@ import lombok.experimental.SuperBuilder;
 @EqualsAndHashCode
 @Getter
 @NoArgsConstructor
-public abstract class AbstractSonilo extends Task implements RunnableTask<AbstractSonilo.Output>, SoniloConnection {
-    /**
-     * Lombok equality would make two configured tasks share one run, so kill state is keyed by instance.
-     * The map is not a plugin property: a field initializer would be dropped by @SuperBuilder, and
-     * @Builder.Default would publish it in the task schema.
-     */
-    private static final ConcurrentHashMap<TaskIdentity, RunState> RUNS = new ConcurrentHashMap<>();
+public abstract class AbstractSonilo<O extends io.kestra.core.models.tasks.Output> extends Task implements RunnableTask<O>, SoniloConnection {
+    // Kill and stop apply to this instance. A deserialized copy does not see the run.
+    @Hidden
+    @JsonIgnore
+    @Getter(AccessLevel.NONE)
+    private transient volatile RunState $runState;
 
     @Schema(
         title = "Sonilo API token",
@@ -85,25 +83,20 @@ public abstract class AbstractSonilo extends Task implements RunnableTask<Abstra
     private Property<Duration> waitTimeout = Property.ofValue(Duration.ofMinutes(30));
 
     @Override
-    public Output run(RunContext runContext) throws Exception {
-        RunState state = new RunState();
+    public O run(RunContext runContext) throws Exception {
+        RunState state = state();
         state.thread = Thread.currentThread();
-        RunState previous = RUNS.put(identity(), state);
-        if (previous != null && previous.killed.get()) {
-            state.killed.set(true);
-        }
         try {
             if (state.killed.get()) {
                 throw killedException();
             }
             SoniloClient client = new SoniloClient(runContext, this, state);
-            Output output = execute(runContext, client);
+            O output = execute(runContext, client);
             if (state.killed.get()) {
                 throw killedException();
             }
             return output;
         } finally {
-            RUNS.remove(identity(), state);
             state.thread = null;
             HttpClient httpClient = state.client.getAndSet(null);
             if (httpClient != null) {
@@ -115,15 +108,15 @@ public abstract class AbstractSonilo extends Task implements RunnableTask<Abstra
         }
     }
 
-    protected abstract Output execute(RunContext runContext, SoniloClient client) throws Exception;
+    protected abstract O execute(RunContext runContext, SoniloClient client) throws Exception;
 
     /**
-     * Sonilo has no cancel-job API. This aborts the local HTTP call and stops polling.
-     * Generation already accepted by Sonilo can keep running and can still be billed.
+     * Sonilo has no cancel API. This stops the local HTTP call and the local poll.
+     * Work Sonilo already accepted can keep running and can still be billed.
      */
     @Override
     public void kill() {
-        RunState state = RUNS.computeIfAbsent(identity(), ignored -> new RunState());
+        RunState state = state();
         state.killed.set(true);
         abort(state.client.get());
         Thread worker = state.thread;
@@ -134,8 +127,20 @@ public abstract class AbstractSonilo extends Task implements RunnableTask<Abstra
 
     @Override
     public void stop() {
-        RunState state = RUNS.computeIfAbsent(identity(), ignored -> new RunState());
-        state.killed.set(true);
+        state().killed.set(true);
+    }
+
+    private RunState state() {
+        RunState current = $runState;
+        if (current != null) {
+            return current;
+        }
+        synchronized (this) {
+            if ($runState == null) {
+                $runState = new RunState();
+            }
+            return $runState;
+        }
     }
 
     protected Duration renderPollInterval(RunContext runContext) throws Exception {
@@ -219,17 +224,13 @@ public abstract class AbstractSonilo extends Task implements RunnableTask<Abstra
         }
     }
 
-    private TaskIdentity identity() {
-        return new TaskIdentity(this);
-    }
-
     private static CancellationException killedException() {
         return new CancellationException("Sonilo task was killed");
     }
 
     /**
-     * Kestra's HttpClient.close() waits for the active call. Kill must abort that call or a delayed
-     * response keeps the worker blocked. Sonilo does not expose a remote cancel endpoint.
+     * {@code HttpClient.close()} waits for the active call. Immediate close unblocks that call.
+     * Sonilo does not expose a remote cancel endpoint.
      */
     private static void abort(HttpClient httpClient) {
         if (httpClient == null) {
@@ -266,29 +267,9 @@ public abstract class AbstractSonilo extends Task implements RunnableTask<Abstra
         volatile Thread thread;
 
         void checkKilled() {
-            if (killed.get() || Thread.currentThread().isInterrupted()) {
-                if (killed.get()) {
-                    throw killedException();
-                }
+            if (killed.get()) {
+                throw killedException();
             }
-        }
-    }
-
-    private static final class TaskIdentity {
-        private final AbstractSonilo task;
-
-        private TaskIdentity(AbstractSonilo task) {
-            this.task = task;
-        }
-
-        @Override
-        public boolean equals(Object other) {
-            return other instanceof TaskIdentity identity && identity.task == this.task;
-        }
-
-        @Override
-        public int hashCode() {
-            return System.identityHashCode(task);
         }
     }
 
@@ -301,46 +282,5 @@ public abstract class AbstractSonilo extends Task implements RunnableTask<Abstra
         m4a,
         wav,
         mp3
-    }
-
-    @Builder
-    @Getter
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    public static class Output implements io.kestra.core.models.tasks.Output {
-        @Schema(title = "Sonilo task identifier")
-        private final String taskId;
-
-        @Schema(title = "Sonilo task status")
-        private final String status;
-
-        @Schema(title = "Internal storage URI of the primary audio or ducked mix")
-        private final URI audioUri;
-
-        @Schema(title = "Internal storage URIs of the clean audio tracks, then any ducked mixes")
-        private final List<URI> audioUris;
-
-        @Schema(title = "Generated title")
-        private final String title;
-
-        @Schema(title = "MIME type of the primary file")
-        private final String contentType;
-
-        @Schema(title = "Ducking output container, audio or video")
-        private final String outputType;
-
-        @Schema(title = "Internal storage URI of the ducked mix")
-        private final URI duckedUri;
-
-        @Schema(title = "Internal storage URIs of separated stems, keyed by stream index and stem name")
-        private final Map<String, URI> stemUris;
-
-        @Schema(title = "Stem separation warning")
-        private final String stemsError;
-
-        @Schema(title = "Internal storage URI of isolated source vocals")
-        private final URI vocalsUri;
-
-        @Schema(title = "Internal storage URIs of speech-preserving muxes")
-        private final List<URI> muxUris;
     }
 }

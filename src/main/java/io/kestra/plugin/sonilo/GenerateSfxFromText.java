@@ -1,15 +1,21 @@
 package io.kestra.plugin.sonilo;
 
+import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
+import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.runners.RunContext;
-import io.kestra.plugin.sonilo.AbstractSonilo.Output;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -47,11 +53,12 @@ import lombok.experimental.SuperBuilder;
         )
     }
 )
-public class GenerateSfxFromText extends AbstractSonilo {
+public class GenerateSfxFromText extends AbstractSonilo<GenerateSfxFromText.Output> implements RunnableTask<GenerateSfxFromText.Output> {
     @Schema(
         title = "Sound effect prompt",
         description = "Describes the effect to generate. Sonilo documents a practical limit of 2000 characters."
     )
+    @PluginProperty(group = "processing")
     @NotNull
     private Property<String> prompt;
 
@@ -59,27 +66,63 @@ public class GenerateSfxFromText extends AbstractSonilo {
         title = "Duration in seconds",
         description = "Optional length from 0.5 to 180. When omitted, Sonilo chooses a length."
     )
+    @PluginProperty(group = "processing")
     private Property<Double> duration;
 
     @Schema(
         title = "Audio format",
         description = "Optional container such as mp3, wav, or m4a. Sent as audio_format."
     )
+    @PluginProperty(group = "processing")
     private Property<String> audioFormat;
 
     @Override
     protected Output execute(RunContext runContext, SoniloClient client) throws Exception {
-        String renderedPrompt = requiredText(runContext, prompt, "prompt");
-        Double renderedDuration = optionalDouble(runContext, duration).orElse(null);
-        if (renderedDuration != null) {
-            requireRange("duration", renderedDuration, 0.5, 180);
+        String rPrompt = requiredText(runContext, prompt, "prompt");
+        Double rDuration = optionalDouble(runContext, duration).orElse(null);
+        if (rDuration != null) {
+            requireRange("duration", rDuration, 0.5, 180);
         }
         Map<String, Object> form = new LinkedHashMap<>();
-        form.put("prompt", renderedPrompt);
-        if (renderedDuration != null) {
-            form.put("duration", SoniloSupport.formatNumber(renderedDuration));
+        form.put("prompt", rPrompt);
+        if (rDuration != null) {
+            form.put("duration", SoniloSupport.formatNumber(rDuration));
         }
         optionalText(runContext, audioFormat).ifPresent(value -> form.put("audio_format", value));
-        return client.generate("/text-to-sfx", form, renderPollInterval(runContext), renderWaitTimeout(runContext));
+        return Output.from(client.generate("/text-to-sfx", form, renderPollInterval(runContext), renderWaitTimeout(runContext)));
+    }
+
+    @Builder
+    @Getter
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class Output implements io.kestra.core.models.tasks.Output {
+        @Schema(title = "Sonilo task identifier")
+        private final String taskId;
+
+        @Schema(title = "Sonilo task status")
+        private final String status;
+
+        @Schema(title = "Internal storage URI of the primary audio")
+        private final URI audioUri;
+
+        @Schema(title = "Internal storage URIs of the audio tracks")
+        private final List<URI> audioUris;
+
+        @Schema(title = "Generated title")
+        private final String title;
+
+        @Schema(title = "MIME type of the primary file")
+        private final String contentType;
+
+        private static Output from(SoniloClient.Generation generation) {
+            return Output.builder()
+                .taskId(generation.taskId())
+                .status(generation.status())
+                .audioUri(generation.audioUri())
+                .audioUris(generation.audioUris())
+                .title(generation.title())
+                .contentType(generation.contentType())
+                .build();
+        }
     }
 }

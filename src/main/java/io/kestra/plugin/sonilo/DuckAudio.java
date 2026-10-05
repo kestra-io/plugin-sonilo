@@ -1,15 +1,19 @@
 package io.kestra.plugin.sonilo;
 
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.runners.RunContext;
-import io.kestra.plugin.sonilo.AbstractSonilo.Output;
 import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -38,9 +42,9 @@ import lombok.experimental.SuperBuilder;
 
                 inputs:
                   - id: voice_uri
-                    type: STRING
+                    type: FILE
                   - id: music_uri
-                    type: STRING
+                    type: FILE
 
                 tasks:
                   - id: duck_audio
@@ -52,7 +56,7 @@ import lombok.experimental.SuperBuilder;
         )
     }
 )
-public class DuckAudio extends AbstractSonilo {
+public class DuckAudio extends AbstractSonilo<DuckAudio.Output> implements RunnableTask<DuckAudio.Output> {
     @Schema(
         title = "Voice from internal storage",
         description = "Kestra URI of the foreground voice. Audio or video is accepted. Set this or voiceUrl, not both."
@@ -83,24 +87,54 @@ public class DuckAudio extends AbstractSonilo {
 
     @Override
     protected Output execute(RunContext runContext, SoniloClient client) throws Exception {
-        String renderedVoice = optionalText(runContext, voice).orElse(null);
-        String renderedVoiceUrl = optionalText(runContext, voiceUrl).orElse(null);
-        String renderedMusic = optionalText(runContext, music).orElse(null);
-        String renderedMusicUrl = optionalText(runContext, musicUrl).orElse(null);
-        requireExactlyOne("voice", renderedVoice, "voiceUrl", renderedVoiceUrl);
-        requireExactlyOne("music", renderedMusic, "musicUrl", renderedMusicUrl);
+        String rVoice = optionalText(runContext, voice).orElse(null);
+        String rVoiceUrl = optionalText(runContext, voiceUrl).orElse(null);
+        String rMusic = optionalText(runContext, music).orElse(null);
+        String rMusicUrl = optionalText(runContext, musicUrl).orElse(null);
+        requireExactlyOne("voice", rVoice, "voiceUrl", rVoiceUrl);
+        requireExactlyOne("music", rMusic, "musicUrl", rMusicUrl);
 
         Map<String, Object> form = new LinkedHashMap<>();
-        if (renderedVoice != null) {
-            form.put("voice_file", client.storageFile(renderedVoice, "voice.wav").file());
+        if (rVoice != null) {
+            form.put("voice_file", client.storageFile(rVoice, "voice.wav").file());
         } else {
-            form.put("voice_url", renderedVoiceUrl);
+            form.put("voice_url", rVoiceUrl);
         }
-        if (renderedMusic != null) {
-            form.put("music_file", client.storageFile(renderedMusic, "music.wav").file());
+        if (rMusic != null) {
+            form.put("music_file", client.storageFile(rMusic, "music.wav").file());
         } else {
-            form.put("music_url", renderedMusicUrl);
+            form.put("music_url", rMusicUrl);
         }
-        return client.generate("/audio-ducking", form, renderPollInterval(runContext), renderWaitTimeout(runContext));
+        return Output.from(client.generate("/audio-ducking", form, renderPollInterval(runContext), renderWaitTimeout(runContext)));
+    }
+
+    @Builder
+    @Getter
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public static class Output implements io.kestra.core.models.tasks.Output {
+        @Schema(title = "Sonilo task identifier")
+        private final String taskId;
+
+        @Schema(title = "Sonilo task status")
+        private final String status;
+
+        @Schema(title = "Internal storage URI of the ducked mix")
+        private final URI audioUri;
+
+        @Schema(title = "MIME type of the mix")
+        private final String contentType;
+
+        @Schema(title = "Ducking output container, audio or video")
+        private final String outputType;
+
+        private static Output from(SoniloClient.Generation generation) {
+            return Output.builder()
+                .taskId(generation.taskId())
+                .status(generation.status())
+                .audioUri(generation.audioUri())
+                .contentType(generation.contentType())
+                .outputType(generation.outputType())
+                .build();
+        }
     }
 }

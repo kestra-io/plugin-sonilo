@@ -75,12 +75,16 @@ final class SoniloSupport {
             || Boolean.TRUE.equals(preserveSpeech);
     }
 
-    static String statusOf(Map<String, Object> body) {
-        Object status = body == null ? null : body.get("status");
+    static String normalizeStatus(String status) {
         if (status == null) {
             return "";
         }
-        return status.toString().trim().toLowerCase(Locale.ROOT);
+        return status.trim().toLowerCase(Locale.ROOT);
+    }
+
+    static String statusOf(Map<String, Object> body) {
+        Object status = body == null ? null : body.get("status");
+        return normalizeStatus(status == null ? null : status.toString());
     }
 
     static boolean isSuccess(String status) {
@@ -153,23 +157,35 @@ final class SoniloSupport {
         return sanitizeFilename(uri.getPath(), fallback);
     }
 
+    /**
+     * Namespace KV keys only allow letters, digits, and {@code ._-}.
+     * Each id is encoded so a {@code _} inside an id cannot collide with the separator.
+     * Every other character uses four hex digits, so the next character cannot extend the escape.
+     */
     static String kvKey(String flowId, String triggerId, String taskId) {
-        String raw = "sonilo_" + nullToEmpty(flowId) + "_" + nullToEmpty(triggerId) + "_" + nullToEmpty(taskId);
-        StringBuilder key = new StringBuilder();
-        for (int i = 0; i < raw.length(); i++) {
-            char current = raw.charAt(i);
-            boolean allowed = (current >= 'a' && current <= 'z')
-                || (current >= 'A' && current <= 'Z')
-                || (current >= '0' && current <= '9')
-                || current == '.'
-                || current == '_'
-                || current == '-';
-            key.append(allowed ? current : '_');
+        return "sonilo_" + encodeSegment(flowId) + "_" + encodeSegment(triggerId) + "_" + encodeSegment(taskId);
+    }
+
+    private static String encodeSegment(String value) {
+        if (value == null || value.isEmpty()) {
+            return "-e";
         }
-        if (key.isEmpty() || !Character.isLetterOrDigit(key.charAt(0))) {
-            key.insert(0, 'k');
+        StringBuilder encoded = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            if ((current >= 'a' && current <= 'z') || (current >= 'A' && current <= 'Z') || (current >= '0' && current <= '9')) {
+                encoded.append(current);
+            } else if (current == '_') {
+                encoded.append("-u");
+            } else if (current == '-') {
+                encoded.append("-d");
+            } else if (current == '.') {
+                encoded.append("-p");
+            } else {
+                encoded.append("-x").append(String.format("%04x", (int) current));
+            }
         }
-        return key.toString();
+        return encoded.toString();
     }
 
     static String truncate(String value) {
@@ -181,9 +197,5 @@ final class SoniloSupport {
             return trimmed;
         }
         return trimmed.substring(0, 1000) + "...";
-    }
-
-    private static String nullToEmpty(String value) {
-        return value == null ? "" : value;
     }
 }

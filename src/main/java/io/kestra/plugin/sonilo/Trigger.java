@@ -2,7 +2,6 @@ package io.kestra.plugin.sonilo;
 
 import java.net.URI;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Optional;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -104,6 +103,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
         title = "Sonilo task identifier to watch",
         description = "Existing task id returned by an earlier Sonilo submission."
     )
+    @PluginProperty(group = "source")
     @NotNull
     private Property<String> taskId;
 
@@ -120,66 +120,52 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
     @Override
     public Optional<Execution> evaluate(ConditionContext conditionContext, TriggerContext context) throws Exception {
         RunContext runContext = conditionContext.getRunContext();
-        String renderedTaskId = runContext.render(taskId).as(String.class).orElse("").trim();
-        if (renderedTaskId.isBlank()) {
+        String rTaskId = runContext.render(taskId).as(String.class).orElse("").trim();
+        if (rTaskId.isBlank()) {
             throw new IllegalArgumentException("taskId is required");
         }
         SoniloClient client = new SoniloClient(runContext, this, new AbstractSonilo.RunState());
-        Map<String, Object> task = client.fetchTask(renderedTaskId);
-        String rawStatus = task.get("status") == null ? "" : task.get("status").toString().trim();
-        String status = SoniloSupport.statusOf(task);
+        SoniloResponse.TaskView task = client.fetchTask(rTaskId);
+        String rawStatus = task.rawStatus();
+        String status = task.status();
         if (!SoniloSupport.isTerminal(status)) {
-            runContext.logger().debug("Sonilo task {} is {}", renderedTaskId, rawStatus);
+            runContext.logger().debug("Sonilo task {} is {}", rTaskId, rawStatus);
             return Optional.empty();
         }
 
-        String key = SoniloSupport.kvKey(flowId(conditionContext, context, runContext), getId(), renderedTaskId);
+        String key = SoniloSupport.kvKey(flowId(conditionContext, context, runContext), getId(), rTaskId);
         if (alreadyFired(runContext, conditionContext, key, status)) {
-            runContext.logger().debug("Sonilo task {} already fired with status {}", renderedTaskId, status);
+            runContext.logger().debug("Sonilo task {} already fired with status {}", rTaskId, status);
             return Optional.empty();
         }
 
-        // Build the output before the claim. A download failure must leave the key unset so the next interval retries.
-        Output output = toOutput(runContext, client, task, renderedTaskId, rawStatus, status);
+        // Build the output first so a download failure does not consume the fire.
+        Output output = toOutput(runContext, client, task, rTaskId, rawStatus, status);
         Execution execution = TriggerService.generateExecution(this, conditionContext, context, output);
-        // The scheduler loop is one thread and skips a trigger while evaluateRunningDate is set.
-        // A scheduler restart clears that date while a separate worker can still be inside evaluate().
         // Namespace KV put is not a compare-and-set, so same-JVM evaluations claim under this lock.
-        // Two worker processes can still both emit; there is no plugin-facing distributed lock.
+        // Two worker processes can still both emit.
         synchronized (fireLock(conditionContext, runContext, key)) {
             if (alreadyFired(runContext, conditionContext, key, status)) {
-                runContext.logger().debug("Sonilo task {} already fired with status {}", renderedTaskId, status);
+                runContext.logger().debug("Sonilo task {} already fired with status {}", rTaskId, status);
                 return Optional.empty();
             }
             if (!markFired(runContext, conditionContext, key, status)) {
                 return Optional.empty();
             }
         }
-        runContext.logger().info("Sonilo task {} finished with status {}", renderedTaskId, status);
+        runContext.logger().info("Sonilo task {} finished with status {}", rTaskId, status);
         return Optional.of(execution);
     }
 
-    private Output toOutput(RunContext runContext, SoniloClient client, Map<String, Object> task, String renderedTaskId, String rawStatus, String status) throws Exception {
-        String responseTaskId = task.get("task_id") == null ? renderedTaskId : task.get("task_id").toString();
+    private Output toOutput(RunContext runContext, SoniloClient client, SoniloResponse.TaskView task, String rTaskId, String rawStatus, String status) throws Exception {
+        String responseTaskId = task.taskId() == null ? rTaskId : task.taskId();
         if (SoniloSupport.isFailure(status)) {
-            String code = null;
-            String message = null;
-            Object error = task.get("error");
-            if (error instanceof String text) {
-                message = text;
-            } else if (error instanceof Map<?, ?> raw) {
-                if (raw.get("code") != null) {
-                    code = raw.get("code").toString();
-                }
-                if (raw.get("message") != null) {
-                    message = raw.get("message").toString();
-                }
-            }
+            SoniloResponse.ErrorView error = task.error();
             return Output.builder()
                 .taskId(responseTaskId)
                 .status(rawStatus)
-                .error(message)
-                .errorCode(code)
+                .error(error == null ? null : error.message())
+                .errorCode(error == null ? null : error.code())
                 .build();
         }
 
@@ -189,7 +175,7 @@ public class Trigger extends AbstractTrigger implements PollingTriggerInterface,
             .taskId(responseTaskId)
             .status(rawStatus)
             .audioUrl(remoteUrl)
-            .outputUrl(task.get("output_url") == null ? null : task.get("output_url").toString())
+            .outputUrl(task.outputUrl())
             .audioUri(audioUri)
             .build();
     }

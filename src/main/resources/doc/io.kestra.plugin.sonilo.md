@@ -22,8 +22,8 @@ Polling defaults to every 3 seconds and gives up after 30 minutes. Stem separati
 
 When the task reaches a terminal status, the trigger starts one execution for that task id and status. Success and failure both fire. A successful file is copied into internal storage because presigned URLs expire. A failed task exposes `error` and `errorCode` and does not download a file. Pass the task id as a literal value. `{{ trigger.taskId }}` is the id from a fired execution, so it cannot identify the task on the first poll.
 
-## Cancellation and licensing
+## Cancellation
 
 Killing a running task stops the local HTTP call and the local poll. Sonilo has no cancel-job API, so work already accepted by Sonilo can continue and can still be billed.
 
-Audio returned by the API is licensed for commercial use, including use by your end users, under Sonilo's pay-as-you-go API terms. Film, TV, broadcast, and streaming-release licenses are arranged with Sonilo sales. This description is not legal advice.
+Generated audio is covered by [Sonilo's Terms of Service](https://sonilo.com/terms-of-service).

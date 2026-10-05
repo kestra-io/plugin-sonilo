@@ -1,11 +1,11 @@
 group: io.kestra.plugin.sonilo
 name: "sonilo"
 title: "Sonilo"
-description: "Generate licensed music, sound effects, and ducked mixes with the Sonilo API."
+description: "Generate music, sound effects, and ducked mixes with the Sonilo API."
 body: |
   Tasks call the Sonilo Platform API at https://api.sonilo.com. Music can stream or run as a polled task. Sound effects and audio ducking are asynchronous. Finished audio is stored in Kestra internal storage.
 
-  API audio is licensed for commercial use, including use by end users, on Sonilo's pay-as-you-go terms. Film, TV, broadcast, and streaming-release licenses are arranged with Sonilo sales. This is not legal advice.
+  Usage of generated audio is covered by Sonilo's Terms of Service: https://sonilo.com/terms-of-service
 
   Platform API keys come from platform.sonilo.com and are separate from a sonilo.com app login. Sonilo has no cancel-job API, so killing a task stops only the local wait.
 videos: []

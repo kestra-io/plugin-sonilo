@@ -3,6 +3,7 @@ package io.kestra.plugin.sonilo;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -86,7 +87,7 @@ class SoniloPluginTest {
         )));
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music()
+        var output = music()
             .prompt(Property.ofValue("Warm analog synths"))
             .duration(Property.ofValue(30))
             .segments(Property.ofValue("[{\"at\":0}]"))
@@ -127,7 +128,7 @@ class SoniloPluginTest {
         media("/media/wav-1.wav", "audio/wav", audio);
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music()
+        var output = music()
             .prompt(Property.ofValue("Wide strings"))
             .outputFormat(Property.ofValue(AbstractSonilo.OutputFormat.wav))
             .build()
@@ -168,7 +169,7 @@ class SoniloPluginTest {
         )));
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music().prompt(Property.ofValue("Two beds")).build().run(runContext);
+        var output = music().prompt(Property.ofValue("Two beds")).build().run(runContext);
 
         assertEquals(2, output.getAudioUris().size());
         assertEquals(output.getAudioUri(), output.getAudioUris().getFirst());
@@ -187,12 +188,12 @@ class SoniloPluginTest {
             "{\"type\":\"nope\"}",
             chunk("", 0),
             chunk(audio, null),
-            "{\"type\":\"title\",\"title\":\"Kept\"}",
+            "{\"type\":\"title\",\"title\":{\"title\":\"Kept\"}}",
             "{\"type\":\"complete\"}"
         )));
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music().prompt(Property.ofValue("Keep me")).build().run(runContext);
+        var output = music().prompt(Property.ofValue("Keep me")).build().run(runContext);
         assertEquals("Kept", output.getTitle());
         assertArrayEquals(audio, read(runContext, output.getAudioUri()));
     }
@@ -238,7 +239,7 @@ class SoniloPluginTest {
         media("/media/fallback.m4a", "application/octet-stream", audio);
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music().prompt(Property.ofValue("Fallback")).build().run(runContext);
+        var output = music().prompt(Property.ofValue("Fallback")).build().run(runContext);
         assertArrayEquals(audio, read(runContext, output.getAudioUri()));
         assertTrue(output.getAudioUri().toString().endsWith(".m4a"));
         assertNull(mediaRequest("/media/fallback.m4a").getHeader("Authorization"));
@@ -254,7 +255,7 @@ class SoniloPluginTest {
         media("/media/ack.m4a", "audio/mp4", audio);
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music()
+        var output = music()
             .prompt(Property.ofValue("Ack"))
             .mode(Property.ofValue(AbstractSonilo.Mode.stream))
             .build()
@@ -298,7 +299,7 @@ class SoniloPluginTest {
         media("/media/sfx.mp3", "audio/mpeg", objectAudio);
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output objectOutput = sfx().prompt(Property.ofValue("Footsteps")).duration(Property.ofValue(8.0d)).audioFormat(Property.ofValue("mp3")).build().run(runContext);
+        var objectOutput = sfx().prompt(Property.ofValue("Footsteps")).duration(Property.ofValue(8.0d)).audioFormat(Property.ofValue("mp3")).build().run(runContext);
         String body = postRequest("/v1/text-to-sfx").getBodyAsString();
         assertTrue(body.contains("name=\"audio_format\""));
         assertTrue(body.contains("mp3"));
@@ -313,8 +314,83 @@ class SoniloPluginTest {
             {"task_id":"sfx-2","status":"success","audio":[{"url":"/media/sfx2.mp3","content_type":"audio/mp3","file_size":9,"stream_index":0}]}
             """)));
         media("/media/sfx2.mp3", "audio/mpeg", arrayAudio);
-        AbstractSonilo.Output arrayOutput = sfx().prompt(Property.ofValue("Door")).build().run(runContext);
+        var arrayOutput = sfx().prompt(Property.ofValue("Door")).build().run(runContext);
         assertArrayEquals(arrayAudio, read(runContext, arrayOutput.getAudioUri()));
+    }
+
+    @Test
+    void keepsDistinctAudioWhenAStreamIndexIsMissing() throws Exception {
+        server.stubFor(post(urlPathEqualTo("/v1/text-to-sfx")).willReturn(json("""
+            {"task_id":"sfx-many","status":"succeeded","audio":[
+              {"url":"/media/late.mp3","content_type":"audio/mpeg","file_size":1},
+              {"url":"/media/second.mp3","content_type":"audio/mpeg","file_size":1,"stream_index":1},
+              {"url":"/media/first.mp3","content_type":"audio/mpeg","file_size":1,"stream_index":0}
+            ]}
+            """)));
+        media("/media/first.mp3", "audio/mpeg", new byte[] {'A'});
+        media("/media/second.mp3", "audio/mpeg", new byte[] {'B'});
+        media("/media/late.mp3", "audio/mpeg", new byte[] {'C'});
+
+        RunContext runContext = runContextFactory.of();
+        var output = sfx().prompt(Property.ofValue("Layers")).build().run(runContext);
+
+        assertEquals(3, output.getAudioUris().size());
+        assertEquals(output.getAudioUri(), output.getAudioUris().getFirst());
+        assertArrayEquals(new byte[] {'A'}, read(runContext, output.getAudioUris().get(0)));
+        assertArrayEquals(new byte[] {'B'}, read(runContext, output.getAudioUris().get(1)));
+        assertArrayEquals(new byte[] {'C'}, read(runContext, output.getAudioUris().get(2)));
+        assertNotEquals(output.getAudioUris().get(0), output.getAudioUris().get(2));
+    }
+
+    @Test
+    void uploadsSfxVideoUsingItsStorageFilename() throws Exception {
+        byte[] video = "clip-bytes".getBytes(StandardCharsets.UTF_8);
+        byte[] audio = "sfx-video".getBytes(StandardCharsets.UTF_8);
+        RunContext runContext = runContextFactory.of();
+        URI stored = runContext.storage().putFile(runContext.workingDir().createFile("clip.mp4", video).toFile());
+        server.stubFor(post(urlPathEqualTo("/v1/video-to-sfx")).willReturn(json("""
+            {"task_id":"sfx-video-1","status":"succeeded","audio":{"url":"/media/sfx-video.mp3","content_type":"audio/mpeg","file_size":9}}
+            """)));
+        media("/media/sfx-video.mp3", "audio/mpeg", audio);
+
+        var output = sfxVideo().video(Property.ofValue(stored.toString())).build().run(runContext);
+        LoggedRequest request = postRequest("/v1/video-to-sfx");
+        assertMultipart(request);
+        String body = request.getBodyAsString();
+        assertTrue(body.contains("filename=\"clip.mp4\""), body);
+        assertTrue(body.contains("clip-bytes"));
+        assertFalse(body.contains("filename=\"video.mp4\""));
+        assertArrayEquals(audio, read(runContext, output.getAudioUri()));
+        assertTrue(output.getAudioUri().toString().endsWith(".mp3"));
+    }
+
+    @Test
+    void sendsSfxVideoUrl() throws Exception {
+        byte[] audio = "url-sfx".getBytes(StandardCharsets.UTF_8);
+        server.stubFor(post(urlPathEqualTo("/v1/video-to-sfx")).willReturn(json("{\"task_id\":\"sfx-url-1\",\"status\":\"queued\"}")));
+        server.stubFor(get(urlPathEqualTo("/v1/tasks/sfx-url-1")).willReturn(json("""
+            {"task_id":"sfx-url-1","status":"succeeded","audio":[{"url":"/media/sfx-url.m4a","content_type":"audio/mp4","file_size":7,"stream_index":0}]}
+            """)));
+        media("/media/sfx-url.m4a", "audio/mp4", audio);
+
+        RunContext runContext = runContextFactory.of();
+        var output = sfxVideo()
+            .videoUrl(Property.ofValue("https://cdn.example/scene.mp4"))
+            .prompt(Property.ofValue("Soft room tone"))
+            .audioFormat(Property.ofValue("m4a"))
+            .build()
+            .run(runContext);
+
+        String body = postRequest("/v1/video-to-sfx").getBodyAsString();
+        assertTrue(body.contains("name=\"video_url\""));
+        assertTrue(body.contains("https://cdn.example/scene.mp4"));
+        assertTrue(body.contains("name=\"prompt\""));
+        assertTrue(body.contains("Soft room tone"));
+        assertTrue(body.contains("name=\"audio_format\""));
+        assertTrue(body.contains("m4a"));
+        assertFalse(body.contains("filename="));
+        assertArrayEquals(audio, read(runContext, output.getAudioUri()));
+        assertEquals("sfx-url-1", output.getTaskId());
     }
 
     @Test
@@ -325,7 +401,7 @@ class SoniloPluginTest {
         URI stored = runContext.storage().putFile(runContext.workingDir().createFile("clip.mp4", video).toFile());
         server.stubFor(post(urlPathEqualTo("/v1/video-to-music")).willReturn(ndjson(chunk(audio, null), "{\"type\":\"complete\"}")));
 
-        AbstractSonilo.Output output = videoMusic().video(Property.ofValue(stored.toString())).build().run(runContext);
+        var output = videoMusic().video(Property.ofValue(stored.toString())).build().run(runContext);
         LoggedRequest request = postRequest("/v1/video-to-music");
         assertMultipart(request);
         String body = request.getBodyAsString();
@@ -384,7 +460,7 @@ class SoniloPluginTest {
         media("/media/bass.wav", "audio/wav", new byte[] {'S'});
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = videoMusic()
+        var output = videoMusic()
             .videoUrl(Property.ofValue("https://cdn.example/scene.mp4"))
             .stems(Property.ofValue(true))
             .preserveSpeech(Property.ofValue(true))
@@ -422,7 +498,7 @@ class SoniloPluginTest {
         media("/media/mix.mp3", "audio/mpeg", mix);
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = DuckAudio.builder()
+        var output = DuckAudio.builder()
             .id("duck_audio")
             .type(DuckAudio.class.getName())
             .apiToken(Property.ofValue("test-token"))
@@ -456,7 +532,8 @@ class SoniloPluginTest {
         IllegalStateException unavailable = assertThrows(IllegalStateException.class, () -> music().prompt(Property.ofValue("Missing")).build().run(runContextFactory.of()));
         assertTrue(unavailable.getMessage().contains("503"));
         assertTrue(unavailable.getMessage().contains("not_configured"));
-        assertEquals(1, requestsTo("/v1/text-to-music"));
+        // Kestra's HttpClient retries 503 once before this plugin's loop sees the response. 402 is not retried.
+        assertEquals(2, requestsTo("/v1/text-to-music"));
     }
 
     @Test
@@ -466,6 +543,11 @@ class SoniloPluginTest {
             .inScenario("limit")
             .whenScenarioStateIs(Scenario.STARTED)
             .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "0").withBody("{\"message\":\"slow down\"}"))
+            .willSetStateTo("again"));
+        server.stubFor(post(urlPathEqualTo("/v1/text-to-music"))
+            .inScenario("limit")
+            .whenScenarioStateIs("again")
+            .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "0").withBody("{\"message\":\"slow down\"}"))
             .willSetStateTo("ok"));
         server.stubFor(post(urlPathEqualTo("/v1/text-to-music"))
             .inScenario("limit")
@@ -473,9 +555,10 @@ class SoniloPluginTest {
             .willReturn(ndjson(chunk(audio, null), "{\"type\":\"complete\"}")));
 
         RunContext runContext = runContextFactory.of();
-        AbstractSonilo.Output output = music().prompt(Property.ofValue("Retry")).build().run(runContext);
+        var output = music().prompt(Property.ofValue("Retry")).build().run(runContext);
         assertArrayEquals(audio, read(runContext, output.getAudioUri()));
-        assertEquals(2, requestsTo("/v1/text-to-music"));
+        // The HTTP client retries 429 once, then this plugin retries with Retry-After.
+        assertEquals(3, requestsTo("/v1/text-to-music"));
 
         server.resetAll();
         server.stubFor(post(urlPathEqualTo("/v1/text-to-music")).willReturn(aResponse().withStatus(401).withHeader("Content-Type", "application/json").withBody("{\"code\":\"unauthorized\",\"message\":\"bad token\"}")));
@@ -699,7 +782,7 @@ class SoniloPluginTest {
         GenerateMusicFromText task = music().prompt(Property.ofValue("Kill me")).build();
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
-            Future<AbstractSonilo.Output> future = executor.submit(() -> task.run(runContextFactory.of()));
+            Future<GenerateMusicFromText.Output> future = executor.submit(() -> task.run(runContextFactory.of()));
             assertTrue(started.await(5, TimeUnit.SECONDS));
             task.kill();
             ExecutionException exception = assertThrows(ExecutionException.class, () -> future.get(4, TimeUnit.SECONDS));
@@ -735,6 +818,17 @@ class SoniloPluginTest {
         return GenerateMusicFromVideo.builder()
             .id("generate_music")
             .type(GenerateMusicFromVideo.class.getName())
+            .apiToken(Property.ofValue("test-token"))
+            .baseUrl(Property.ofValue(server.baseUrl()))
+            .pollInterval(Property.ofValue(Duration.ofMillis(20)))
+            .waitTimeout(Property.ofValue(Duration.ofSeconds(3)));
+    }
+
+    @SuppressWarnings("rawtypes")
+    private GenerateSfxFromVideo.GenerateSfxFromVideoBuilder sfxVideo() {
+        return GenerateSfxFromVideo.builder()
+            .id("generate_sfx")
+            .type(GenerateSfxFromVideo.class.getName())
             .apiToken(Property.ofValue("test-token"))
             .baseUrl(Property.ofValue(server.baseUrl()))
             .pollInterval(Property.ofValue(Duration.ofMillis(20)))

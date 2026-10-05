@@ -2,6 +2,7 @@ package io.kestra.plugin.sonilo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -79,6 +80,27 @@ class SoniloSupportTest {
         assertEquals("abc", SoniloSupport.truncate(" abc "));
         assertEquals(1003, SoniloSupport.truncate("x".repeat(1001)).length());
         assertTrue(SoniloSupport.truncate("x".repeat(1001)).endsWith("..."));
+    }
+
+    @Test
+    void kvKeyKeepsUnderscoresDistinctFromSeparators() {
+        assertEquals("sonilo_a-ub_c_task", SoniloSupport.kvKey("a_b", "c", "task"));
+        assertEquals("sonilo_a_b-uc_task", SoniloSupport.kvKey("a", "b_c", "task"));
+        assertNotEquals(SoniloSupport.kvKey("a_b", "c", "task"), SoniloSupport.kvKey("a", "b_c", "task"));
+        assertEquals("sonilo_a-x002fb_c_task", SoniloSupport.kvKey("a/b", "c", "task"));
+        assertNotEquals(SoniloSupport.kvKey("a/b", "c", "task"), SoniloSupport.kvKey("a_b", "c", "task"));
+        assertNotEquals(SoniloSupport.kvKey("a/b", "c", "task"), SoniloSupport.kvKey("a\u02fb", "c", "task"));
+        assertEquals("sonilo_a-x02fb_c_task", SoniloSupport.kvKey("a\u02fb", "c", "task"));
+        assertEquals("sonilo_a-du_c_task", SoniloSupport.kvKey("a-u", "c", "task"));
+        assertEquals("sonilo_a-u_c_task", SoniloSupport.kvKey("a_", "c", "task"));
+        assertNotEquals(SoniloSupport.kvKey("a-u", "c", "task"), SoniloSupport.kvKey("a_", "c", "task"));
+        assertEquals("sonilo_-e_c_task", SoniloSupport.kvKey("", "c", "task"));
+        assertEquals("sonilo_0_c_task", SoniloSupport.kvKey("0", "c", "task"));
+        assertNotEquals(SoniloSupport.kvKey(null, "c", "task"), SoniloSupport.kvKey("0", "c", "task"));
+        String dotted = SoniloSupport.kvKey("company.media", "wait/for", "a b");
+        assertEquals("sonilo_company-pmedia_wait-x002ffor_a-x0020b", dotted);
+        assertNotEquals(dotted, SoniloSupport.kvKey("company.media", "wait\u02ffor", "a\u020b"));
+        assertTrue(dotted.matches("[a-zA-Z0-9][a-zA-Z0-9._-]*"));
     }
 
     @Test

@@ -5,11 +5,11 @@
 - Provides plugin components under `io.kestra.plugin.sonilo`.
 - Tasks: `GenerateMusicFromText`, `GenerateMusicFromVideo`, `GenerateSfxFromText`, `GenerateSfxFromVideo`, and `DuckAudio`.
 - `Trigger` polls `GET /v1/tasks/{taskId}` and fires once when that task reaches a terminal status.
-- Shared connection and HTTP behavior live on `AbstractSonilo`, `SoniloConnection`, `SoniloClient`, and `SoniloSupport`.
+- Shared connection and HTTP behavior live on `AbstractSonilo`, `SoniloConnection`, `SoniloClient`, `SoniloResponse`, and `SoniloSupport`.
 
 ## Why
 
-- Media teams need to generate licensed music, sound effects, and ducked mixes from a Kestra flow and keep the audio after Sonilo's presigned URLs expire.
+- Media teams need to generate music, sound effects, and ducked mixes from a Kestra flow and keep the audio after Sonilo's presigned URLs expire.
 - A flow can wait for an existing Sonilo task without a webhook. Sonilo does not offer one.
 - The plugin gives those tasks a repeatable build, test, and publish path.
 
