@@ -29,7 +29,7 @@ java {
 }
 
 group = "io.kestra.plugin"
-description = 'Sonilo plugin for Kestra'
+description = 'Generate music, sound effects, and ducked mixes with the Sonilo API'
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
@@ -87,6 +87,8 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter-engine"
     testImplementation "org.hamcrest:hamcrest"
     testImplementation "org.hamcrest:hamcrest-library"
+
+    testImplementation "org.wiremock:wiremock-standalone:3.13.1"
 }
 
 /**********************************************************************************************************************\
